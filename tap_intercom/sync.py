@@ -46,11 +46,15 @@ def write_bookmark(state, stream, value):
     singer.write_state(state)
 
 
+# def transform_datetime(this_dttm):
+#     with Transformer(integer_datetime_fmt=UNIX_MILLISECONDS_INTEGER_DATETIME_PARSING) \
+#         as transformer:
+#         new_dttm = transformer._transform_datetime(this_dttm)
+#     return new_dttm
 def transform_datetime(this_dttm):
-     with Transformer(integer_datetime_fmt=UNIX_MILLISECONDS_INTEGER_DATETIME_PARSING) \
-         as transformer:
-         new_dttm = transformer._transform_datetime(this_dttm)
-     return new_dttm
+    with Transformer() as transformer:
+        new_dttm = transformer._transform_datetime(this_dttm)
+    return new_dttm
 
 
 def process_records(catalog, #pylint: disable=too-many-branches
