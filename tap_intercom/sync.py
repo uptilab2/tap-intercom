@@ -1,7 +1,7 @@
 import time
 import math
 import singer
-from singer import metrics, metadata, Transformer, utils, UNIX_MILLISECONDS_INTEGER_DATETIME_PARSING
+from singer import metrics, metadata, Transformer, utils, UNIX_MILLISECONDS_INTEGER_DATETIME_PARSING, UNIX_SECONDS_INTEGER_DATETIME_PARSING
 from singer.utils import strptime_to_utc
 from tap_intercom.transform import transform_json
 from tap_intercom.streams import STREAMS
@@ -56,6 +56,7 @@ def transform_datetime(this_dttm):
         new_dttm = transformer._transform_datetime(this_dttm)
     return new_dttm
 
+MS_INT_DATETIME_KEYS = 'remote_created_at', 'signed_up_at'
 
 def process_records(catalog, #pylint: disable=too-many-branches
                     stream_name,
@@ -79,8 +80,12 @@ def process_records(catalog, #pylint: disable=too-many-branches
                 record[parent + '_id'] = parent_id
 
             # Transform record for Singer.io
-            with Transformer(integer_datetime_fmt=UNIX_MILLISECONDS_INTEGER_DATETIME_PARSING) \
+            with Transformer(integer_datetime_fmt=UNIX_SECONDS_INTEGER_DATETIME_PARSING) \
                 as transformer:
+                for key in MS_INT_DATETIME_KEYS:
+                    if record.get(key):
+                        record[key] /= 1000
+                if 'remote_created_at' in record:
                 transformed_record = transformer.transform(
                     record,
                     schema,
