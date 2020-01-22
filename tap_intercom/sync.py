@@ -1,7 +1,7 @@
 import time
 import math
 import singer
-from singer import metrics, metadata, Transformer, utils, UNIX_SECONDS_INTEGER_DATETIME_PARSING
+from singer import metrics, metadata, Transformer, utils, UNIX_MILLISECONDS_INTEGER_DATETIME_PARSING
 from singer.utils import strptime_to_utc
 from tap_intercom.transform import transform_json
 from tap_intercom.streams import STREAMS
@@ -79,7 +79,7 @@ def process_records(catalog, #pylint: disable=too-many-branches
                 record[parent + '_id'] = parent_id
 
             # Transform record for Singer.io
-            with Transformer(integer_datetime_fmt=UNIX_SECONDS_INTEGER_DATETIME_PARSING) \
+            with Transformer(integer_datetime_fmt=UNIX_MILLISECONDS_INTEGER_DATETIME_PARSING) \
                 as transformer:
                 transformed_record = transformer.transform(
                     record,
