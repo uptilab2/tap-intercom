@@ -85,7 +85,6 @@ def process_records(catalog, #pylint: disable=too-many-branches
                 for key in MS_INT_DATETIME_KEYS:
                     if record.get(key):
                         record[key] /= 1000
-                if 'remote_created_at' in record:
                 transformed_record = transformer.transform(
                     record,
                     schema,
