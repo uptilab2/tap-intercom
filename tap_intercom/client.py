@@ -1,4 +1,3 @@
-import time
 import backoff
 import requests
 from requests.exceptions import ConnectionError
@@ -6,6 +5,8 @@ from singer import metrics, utils
 import singer
 
 LOGGER = singer.get_logger()
+
+API_VERSION = '2.0'
 
 
 class Server5xxError(Exception):
@@ -154,6 +155,7 @@ class IntercomClient(object):
             headers['User-Agent'] = self.__user_agent
         headers['Authorization'] = 'Bearer {}'.format(self.__access_token)
         headers['Accept'] = 'application/json'
+        headers['Intercom-Version'] = API_VERSION
         response = self.__session.get(
             # Simple endpoint that returns 1 Account record (to check API/access_token access):
             url='{}/{}'.format(self.base_url, 'tags'),
@@ -165,8 +167,7 @@ class IntercomClient(object):
             resp = response.json()
             if 'type' in resp:
                 return True
-            else:
-                return False
+            return False
 
     # Rate limiting:
     #  https://developers.intercom.com/intercom-api-reference/reference#rate-limiting
@@ -192,6 +193,7 @@ class IntercomClient(object):
             kwargs['headers'] = {}
         kwargs['headers']['Authorization'] = 'Bearer {}'.format(self.__access_token)
         kwargs['headers']['Accept'] = 'application/json'
+        kwargs['headers']['Intercom-Version'] = API_VERSION
 
         if self.__user_agent:
             kwargs['headers']['User-Agent'] = self.__user_agent
