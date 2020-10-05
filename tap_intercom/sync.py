@@ -1,10 +1,11 @@
 import time
 import math
 import singer
-from singer import metrics, metadata, Transformer, utils, UNIX_MILLISECONDS_INTEGER_DATETIME_PARSING, UNIX_SECONDS_INTEGER_DATETIME_PARSING
+from singer import metrics, metadata, Transformer, utils, UNIX_SECONDS_INTEGER_DATETIME_PARSING
 from singer.utils import strptime_to_utc
 from tap_intercom.transform import transform_json
 from tap_intercom.streams import STREAMS, flatten_streams
+from datetime import timedelta
 
 LOGGER = singer.get_logger()
 
@@ -54,7 +55,8 @@ def write_bookmark(state, stream, value):
 def transform_datetime(this_dttm):
     with Transformer() as transformer:
         new_dttm = transformer._transform_datetime(this_dttm)
-    return new_dttm
+    return new_dttm + timedelta(hours=2)
+
 
 MS_INT_DATETIME_KEYS = 'remote_created_at', 'signed_up_at'
 
