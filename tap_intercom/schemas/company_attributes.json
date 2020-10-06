@@ -3,7 +3,7 @@
   "additionalProperties": false,
   "properties": {
     "admin_id": {
-      "type": ["null", "integer"]
+      "type": ["null", "string"]
     },
     "api_writable": {
       "type": ["null", "boolean"]
@@ -28,6 +28,9 @@
       "type": ["null", "string"]
     },
     "label": {
+      "type": ["null", "string"]
+    },
+    "model": {
       "type": ["null", "string"]
     },
     "name": {
