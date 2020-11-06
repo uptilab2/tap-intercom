@@ -1,11 +1,10 @@
 import time
 import math
 import singer
-from singer import metrics, metadata, Transformer, utils, UNIX_SECONDS_INTEGER_DATETIME_PARSING
+from singer import metrics, metadata, Transformer, utils, UNIX_MILLISECONDS_INTEGER_DATETIME_PARSING
 from singer.utils import strptime_to_utc
-from tap_intercom.transform import transform_json
-from tap_intercom.streams import STREAMS, flatten_streams
-from datetime import timedelta
+from tap_intercom.transform import transform_json, transform_times, find_datetimes_in_schema
+from tap_intercom.streams import STREAMS, flatten_streams, build_query
 
 LOGGER = singer.get_logger()
 
@@ -55,12 +54,13 @@ def write_bookmark(state, stream, value):
 def transform_datetime(this_dttm):
     with Transformer() as transformer:
         new_dttm = transformer._transform_datetime(this_dttm)
-    return new_dttm + timedelta(hours=2)
+    return new_dttm
 
 
 MS_INT_DATETIME_KEYS = 'remote_created_at', 'signed_up_at'
 
-def process_records(catalog, #pylint: disable=too-many-branches
+
+def process_records(catalog,  # pylint: disable=too-many-branches
                     stream_name,
                     records,
                     time_extracted,
@@ -75,15 +75,20 @@ def process_records(catalog, #pylint: disable=too-many-branches
     schema = stream.schema.to_dict()
     stream_metadata = metadata.to_map(stream.metadata)
 
+    schema_datetimes = find_datetimes_in_schema(schema)
+
     with metrics.record_counter(stream_name) as counter:
         for record in records:
             # If child object, add parent_id to record
             if parent_id and parent:
                 record[parent + '_id'] = parent_id
 
+            # API returns inconsistent epoch representations sec AND millis
+            # in addition to utc timestamps. Normalize to milli for transformer
+            transform_times(record, schema_datetimes)
+
             # Transform record for Singer.io
-            with Transformer(integer_datetime_fmt=UNIX_SECONDS_INTEGER_DATETIME_PARSING) \
-                as transformer:
+            with Transformer(integer_datetime_fmt=UNIX_MILLISECONDS_INTEGER_DATETIME_PARSING) as transformer:
                 for key in MS_INT_DATETIME_KEYS:
                     if record.get(key):
                         record[key] /= 1000
@@ -95,11 +100,10 @@ def process_records(catalog, #pylint: disable=too-many-branches
                 except Exception as err:
                     LOGGER.error('Transformer Error: {}'.format(err))
                     LOGGER.error('Stream: {}, record: {}'.format(stream_name, record))
-                    raise RuntimeError(err)
+                    raise
                 # Reset max_bookmark_value to new value if higher
                 if transformed_record.get(bookmark_field):
-                    if max_bookmark_value is None or \
-                        transformed_record[bookmark_field] > transform_datetime(max_bookmark_value):
+                    if max_bookmark_value is None or transformed_record[bookmark_field] > transform_datetime(max_bookmark_value):
                         max_bookmark_value = transformed_record[bookmark_field]
                         # LOGGER.info('{}, increase max_bookkmark_value: {}'.format(stream_name, max_bookmark_value))
 
@@ -107,16 +111,14 @@ def process_records(catalog, #pylint: disable=too-many-branches
                     if bookmark_type == 'integer':
                         # Keep only records whose bookmark is after the last_integer
                         if transformed_record[bookmark_field] >= last_integer:
-                            write_record(stream_name, transformed_record, \
-                                time_extracted=time_extracted)
+                            write_record(stream_name, transformed_record, time_extracted=time_extracted)
                             counter.increment()
                     elif bookmark_type == 'datetime':
                         last_dttm = transform_datetime(last_datetime)
                         bookmark_dttm = transform_datetime(transformed_record[bookmark_field])
                         # Keep only records whose bookmark is after the last_datetime
                         if bookmark_dttm >= last_dttm:
-                            write_record(stream_name, transformed_record, \
-                                time_extracted=time_extracted)
+                            write_record(stream_name, transformed_record, time_extracted=time_extracted)
                             counter.increment()
                 else:
                     write_record(stream_name, transformed_record, time_extracted=time_extracted)
@@ -126,7 +128,7 @@ def process_records(catalog, #pylint: disable=too-many-branches
 
 
 # Sync a specific parent or child endpoint.
-def sync_endpoint(client, #pylint: disable=too-many-branches
+def sync_endpoint(client,  # pylint: disable=too-many-branches
                   catalog,
                   state,
                   start_date,
@@ -179,6 +181,7 @@ def sync_endpoint(client, #pylint: disable=too-many-branches
     # Check whether the endpoint supports a cursor
     # https://developers.intercom.com/intercom-api-reference/reference#pagination-cursor
     cursor = endpoint_config.get('cursor', False)
+    search = endpoint_config.get('search', False)
 
     # Scroll for always re-syncs
     if scroll_type == 'always':
@@ -200,13 +203,13 @@ def sync_endpoint(client, #pylint: disable=too-many-branches
         if interpolate_page:
             # Interpolate based on current page, total_pages, and updated_at to get first page
             min_page = 1
-            max_page = 4 # initial value, reset to total_pages on 1st API call
+            max_page = 4  # initial value, reset to total_pages on 1st API call
             i = 1
             while (max_page - min_page) > 2:
                 params = {
                     'page': page,
                     'per_page': limit,
-                    **static_params # adds in endpoint specific, sort, filter params
+                    **static_params  # adds in endpoint specific, sort, filter params
                 }
                 querystring = '&'.join(['%s=%s' % (key, value) for (key, value) in params.items()])
                 # API request data
@@ -216,7 +219,7 @@ def sync_endpoint(client, #pylint: disable=too-many-branches
                     params=querystring,
                     endpoint=stream_name)
                 page = int(data.get('pages', {}).get('page'))
-                per_page = int(data.get('pages', {}).get('per_page'))
+                # per_page = int(data.get('pages', {}).get('per_page'))
                 total_pages = int(data.get('pages', {}).get('total_pages'))
                 if i == 1:
                     max_page = total_pages
@@ -259,7 +262,7 @@ def sync_endpoint(client, #pylint: disable=too-many-branches
             params = {
                 'page': min_page,
                 'per_page': limit,
-                **static_params # adds in endpoint specific, sort, filter params
+                **static_params  # adds in endpoint specific, sort, filter params
             }
             # FINISH INTERPOLATION
         elif cursor:
@@ -273,8 +276,14 @@ def sync_endpoint(client, #pylint: disable=too-many-branches
             params = {
                 'page': page,
                 'per_page': limit,
-                **static_params # adds in endpoint specific, sort, filter params
+                **static_params  # adds in endpoint specific, sort, filter params
             }
+
+    request_body = None
+    # Initial search query contains only a starting_time
+    if search:
+        search_query = endpoint_config.get('search_query')
+        request_body = build_query(search_query, max_bookmark_int)
 
     i = 1
     while next_url is not None:
@@ -297,32 +306,34 @@ def sync_endpoint(client, #pylint: disable=too-many-branches
 
         # API request data
         data = {}
-        data = client.get(
+        data = client.perform(
+            method=endpoint_config.get('method'),
             url=next_url,
             path=path,
             params=querystring,
-            endpoint=stream_name)
+            endpoint=stream_name,
+            json=request_body)
 
         # LOGGER.info('data = {}'.format(data)) # TESTING, comment out
 
         # time_extracted: datetime when the data was extracted from the API
         time_extracted = utils.now()
         if not data or data is None or data == {}:
-            break # No data results
+            break  # No data results
 
         # Transform data with transform_json from transform.py
         # The data_key identifies the array/list of records below the <root> element.
         # SINGLE RECORD data results appear as dictionary.
         # MULTIPLE RECORD data results appear as an array-list under the data_key.
         # The following code converts ALL results to an array-list and transforms data.
-        transformed_data = [] # initialize the record list
+        transformed_data = []  # initialize the record list
         data_list = []
         data_dict = {}
-        if isinstance(data, list) and not data_key in data:
+        if isinstance(data, list) and data_key not in data:
             data_list = data
             data_dict[data_key] = data_list
             transformed_data = transform_json(data_dict, stream_name, data_key)
-        elif isinstance(data, dict) and not data_key in data:
+        elif isinstance(data, dict) and data_key not in data:
             data_list.append(data)
             data_dict[data_key] = data_list
             transformed_data = transform_json(data_dict, stream_name, data_key)
@@ -333,7 +344,7 @@ def sync_endpoint(client, #pylint: disable=too-many-branches
             if parent_id is None:
                 LOGGER.info('Stream: {}, No transformed data for data = {}'.format(
                     stream_name, data))
-            break # No data results
+            break  # No data results
         # Verify key id_fields are present
         rec_count = 0
         for record in transformed_data:
@@ -428,7 +439,6 @@ def sync_endpoint(client, #pylint: disable=too-many-branches
 
         # set total_records and next_url for pagination
         total_records = total_records + record_count
-        next_url = None
         if is_scrolling:
             scroll_param = data.get('scroll_param')
             if not scroll_param:
@@ -438,6 +448,14 @@ def sync_endpoint(client, #pylint: disable=too-many-branches
             pagination = data.get('pages', {}).get('next', {})
             starting_after = pagination.get('starting_after', None)
             next_url = '{}/{}?starting_after={}'.format(client.base_url, path, starting_after)
+        elif search:
+            pagination = data.get('pages', {}).get('next', {})
+            starting_after = pagination.get('starting_after', None)
+            # Subsequent search queries require starting_after
+            if starting_after:
+                request_body = build_query(search_query, max_bookmark_int, starting_after)
+            else:
+                next_url = None
         else:
             next_url = data.get('pages', {}).get('next', None)
 
@@ -497,6 +515,7 @@ def get_selected_fields(catalog, stream_name):
         except IndexError:
             pass
     return selected_fields
+
 
 def sync(client, config, catalog, state):
     if 'start_date' in config:
