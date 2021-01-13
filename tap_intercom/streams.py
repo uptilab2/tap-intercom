@@ -16,6 +16,17 @@
 #   interpolate_page: True, False (to determine start page based on total pages and bookmark)
 #       default: False
 
+def build_query(body, value, starting_after=None):
+    # Update both the > and the = queries with our bookmark
+    body['query']['value'][0]['value'] = value
+    body['query']['value'][1]['value'] = value
+    if starting_after:
+        body['pagination'] = {
+            'starting_after': starting_after
+        }
+    return body
+
+
 STREAMS = {
     'admin_list': {
         'path': 'admins',
@@ -94,7 +105,29 @@ STREAMS = {
         }
     },
     'contacts': {
-        'path': 'contacts',
+        'path': 'contacts/search',
+        'method': 'POST',
+        'search_query': {
+            'query': {
+                'operator': 'OR',
+                'value': [
+                    {
+                        'field': 'updated_at',
+                        'operator': '>',
+                        'value': 'value'
+                    },
+                    {
+                        'field': 'updated_at',
+                        'operator': '=',
+                        'value': 'value'
+                    }
+                    ]
+            },
+            'sort': {
+                'field': 'updated_at',
+                'order': 'ascending'
+            }
+        },
         'data_key': 'data',
         'key_properties': ['id'],
         'replication_method': 'INCREMENTAL',
@@ -102,7 +135,7 @@ STREAMS = {
         'bookmark_type': 'datetime',
         'batch_size': 150,
         # V2 APIs are starting to adopt a cursor-based approach to pagination
-        'cursor': True
+        'search': True
     },
     'segments': {
         'key_properties': ['id'],

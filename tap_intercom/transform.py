@@ -1,3 +1,8 @@
+import math as m
+
+from singer.utils import strptime_to_utc
+
+
 # De-nest each list node up to record level
 def denest_list_nodes(this_json, data_key, list_nodes):
     new_json = this_json
@@ -52,3 +57,57 @@ def transform_json(this_json, stream_name, data_key):
     if data_key in new_json:
         return new_json[data_key]
     return new_json
+
+
+# Traverse schema and find all date-times where
+# a path is the array of keys needed to descend
+# the schema(tree) to locate the desired value.
+# Returns an array of path arrays.
+def find_datetimes_in_schema(schema):
+    paths = []
+    if 'properties' in schema and isinstance(schema, dict):
+        for k, v in schema['properties'].items(): #pylint: disable=invalid-name
+            if 'format' in v and v['format'] == 'date-time':
+                paths.append([k])
+            else:
+                paths += [
+                    [k] + x for x in find_datetimes_in_schema(v)
+                ]
+    return paths
+
+
+def get_integer_places(value):
+    if value <= 999999999999997:
+        return int(m.log10(value)) + 1
+    counter = 15
+    while value >= 10**counter:
+        counter += 1
+    return counter
+
+# Traverse dict by array of keys and return path's value
+def nested_get(dic, keys):
+    for key in keys:
+        if dic and key in dic:
+            dic = dic[key]
+        else:
+            return None
+    return dic
+
+# Set nested value by arrray of keys as path
+def nested_set(dic, keys, value):
+    for key in keys[:-1]:
+        dic = dic.setdefault(key, {})
+    dic[keys[-1]] = value
+
+# API returns date times, epoch seconds and epoch millis
+# Transform datetimes to epoch millis
+# Transform epoch seconds to millis
+def transform_times(record, schema_datetimes):
+    for datetime_path in schema_datetimes:
+        datetime = nested_get(record, datetime_path)
+
+        if datetime and isinstance(datetime, str):
+            converted_ts = strptime_to_utc(datetime).timestamp() * 1000
+            nested_set(record, datetime_path, converted_ts)
+        elif datetime and get_integer_places(datetime) == 10:
+            nested_set(record, datetime_path, datetime * 1000)
